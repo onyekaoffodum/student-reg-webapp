@@ -79,7 +79,7 @@ public class HomeController {
         }
 
         // Mock email sending
-        logger.info("Sending email to: {}", form.getEmail());
+        logger.info("Sending email to: {}", form.getEmail())
         logger.info("Hello {}, you selected course: {}", form.getName(), form.getCourse());
 
         model.addAttribute("name", form.getName());
