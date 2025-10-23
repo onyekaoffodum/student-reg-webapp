@@ -54,6 +54,9 @@ node {
         }
 
         stage("Send Notification") {
+
+            slackSend channel: 'lic-app-team', message: "Please check console output ${env.BUILD_URL}\', \'${env.JOB_NAME}-${env.BUILD_NUMBER}-${buildStatus}\'", tokenCredentialId: 'SlackToken'
+            
             echo "📧 Sending styled email notification (${buildStatus})..."
 
             emailext(
