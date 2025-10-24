@@ -1,0 +1,252 @@
+pipeline {
+    agent any
+    
+    triggers {
+  githubPush()
+}
+    
+    options {
+  buildDiscarder logRotator(numToKeepStr: '5')
+  disableConcurrentBuilds()
+  timeout(time: 10, unit: 'MINUTES' )
+}
+
+    environment {
+        SONARQUBE_TOKEN = credentials('SonarQubeToken')
+        TomcatserverSSHUserName = 'ec2-user'
+        TomcatSystemIP = '98.81.80.60'
+        CATALINA_HOME = '/opt/tomcat'
+    }
+
+    tools {
+        maven 'Maven-3.9.11'
+    }
+
+    stages {
+        stage("Git Clone") {
+            steps {
+                git branch: 'development', credentialsId: 'GitHub_Credentials', url: 'https://github.com/onyekaoffodum/student-reg-webapp.git'
+            }
+        }
+
+        stage("Maven Build") {
+            steps {
+                sh 'mvn clean package'
+            }
+        }
+
+        stage("Sonar Scan") {
+            steps {
+                sh "mvn clean verify sonar:sonar -Dsonar.token=${SONARQUBE_TOKEN}"
+            }
+        }
+
+        stage("Upload Artifact to Nexus") {
+            steps {
+                sh 'mvn clean deploy'
+            }
+        }
+
+        stage("Deploy WAR to Tomcat") {
+            steps {
+                sshagent(['TomcatServer_SSH_Credential']) {
+                    sh """
+                        echo "Stopping Tomcat on remote server..."
+                        ssh -o StrictHostKeyChecking=no ${TomcatserverSSHUserName}@${TomcatSystemIP} 'sudo ${CATALINA_HOME}/bin/shutdown.sh || true'
+                        sleep 20
+
+                        echo "Removing old WAR (ignore if missing)..."
+                        ssh -o StrictHostKeyChecking=no ${TomcatserverSSHUserName}@${TomcatSystemIP} 'rm -f /opt/tomcat/webapps/student-reg-webapp.war || true'
+
+                        echo "Copying new WAR file..."
+                        scp -o StrictHostKeyChecking=no target/student-reg-webapp.war ${TomcatserverSSHUserName}@${TomcatSystemIP}:/tmp/student-reg-webapp.war
+
+                        echo "Moving WAR to Tomcat webapps folder..."
+                        ssh -o StrictHostKeyChecking=no ${TomcatserverSSHUserName}@${TomcatSystemIP} 'sudo mv /tmp/student-reg-webapp.war /opt/tomcat/webapps/student-reg-webapp.war && sudo chown ec2-user:ec2-user /opt/tomcat/webapps/student-reg-webapp.war'
+
+                        echo "Starting Tomcat..."
+                        ssh -o StrictHostKeyChecking=no ${TomcatserverSSHUserName}@${TomcatSystemIP} 'sudo ${CATALINA_HOME}/bin/startup.sh'
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Deployment to Tomcat (${TomcatSystemIP}) completed successfully!"
+
+            slackSend(
+                channel: 'lic-app-team',
+                color: 'good',
+                message: "✅ Tomcat deployment successful!\n${env.JOB_NAME} Build #${env.BUILD_NUMBER}\n${env.BUILD_URL}",
+                tokenCredentialId: 'SlackToken'
+            )
+
+            emailext(
+                subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - SUCCESS",
+                to: 'sandieji@rocketmail.com, another_email@example.com',
+                mimeType: 'text/html',
+                body: """
+                <html>
+                <head>
+                    <style>
+                        body {
+                            font-family: 'Segoe UI', Arial, sans-serif;
+                            background-color: #f4f4f4;
+                            margin: 0;
+                            padding: 20px;
+                        }
+                        .container {
+                            background: #fff;
+                            border-radius: 8px;
+                            padding: 20px;
+                            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+                        }
+                        .header {
+                            background-color: #4CAF50;
+                            color: white;
+                            padding: 15px;
+                            border-radius: 8px 8px 0 0;
+                            text-align: center;
+                            font-size: 20px;
+                            font-weight: bold;
+                        }
+                        .content {
+                            padding: 20px;
+                            font-size: 14px;
+                            color: #333;
+                        }
+                        .footer {
+                            font-size: 12px;
+                            color: #888;
+                            text-align: center;
+                            padding-top: 15px;
+                            border-top: 1px solid #ddd;
+                        }
+                        a.button {
+                            display: inline-block;
+                            padding: 10px 16px;
+                            background-color: #4CAF50;
+                            color: white;
+                            border-radius: 4px;
+                            text-decoration: none;
+                            margin-top: 15px;
+                        }
+                        a.button:hover {
+                            background-color: #333;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">✅ ${env.JOB_NAME} – Build #${env.BUILD_NUMBER} SUCCESS</div>
+                        <div class="content">
+                            <p>Hello,</p>
+                            <p>The deployment to <b>Tomcat Server (${TomcatSystemIP})</b> was successful.</p>
+                            <p>Check the Jenkins console output for details:</p>
+                            <p style="text-align:center;">
+                                <a class="button" href="${env.BUILD_URL}console">View Console Output</a>
+                            </p>
+                        </div>
+                        <div class="footer">
+                            Jenkins CI • ${new Date().format("EEE, MMM d yyyy HH:mm:ss z")}
+                        </div>
+                    </div>
+                </body>
+                </html>
+                """
+            )
+        }
+
+        failure {
+            echo "❌ Deployment to Tomcat (${TomcatSystemIP}) failed!"
+
+            slackSend(
+                channel: 'lic-app-team',
+                color: 'danger',
+                message: "❌ Tomcat deployment FAILED!\n${env.JOB_NAME} Build #${env.BUILD_NUMBER}\n${env.BUILD_URL}",
+                tokenCredentialId: 'SlackToken'
+            )
+
+            emailext(
+                subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - FAILURE",
+                to: 'sandieji@rocketmail.com',
+                mimeType: 'text/html',
+                body: """
+                <html>
+                <head>
+                    <style>
+                        body {
+                            font-family: 'Segoe UI', Arial, sans-serif;
+                            background-color: #f4f4f4;
+                            margin: 0;
+                            padding: 20px;
+                        }
+                        .container {
+                            background: #fff;
+                            border-radius: 8px;
+                            padding: 20px;
+                            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+                        }
+                        .header {
+                            background-color: #F44336;
+                            color: white;
+                            padding: 15px;
+                            border-radius: 8px 8px 0 0;
+                            text-align: center;
+                            font-size: 20px;
+                            font-weight: bold;
+                        }
+                        .content {
+                            padding: 20px;
+                            font-size: 14px;
+                            color: #333;
+                        }
+                        .footer {
+                            font-size: 12px;
+                            color: #888;
+                            text-align: center;
+                            padding-top: 15px;
+                            border-top: 1px solid #ddd;
+                        }
+                        a.button {
+                            display: inline-block;
+                            padding: 10px 16px;
+                            background-color: #F44336;
+                            color: white;
+                            border-radius: 4px;
+                            text-decoration: none;
+                            margin-top: 15px;
+                        }
+                        a.button:hover {
+                            background-color: #333;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">❌ ${env.JOB_NAME} – Build #${env.BUILD_NUMBER} FAILED</div>
+                        <div class="content">
+                            <p>Hello,</p>
+                            <p>The deployment to <b>Tomcat Server (${TomcatSystemIP})</b> has failed.</p>
+                            <p>Please review the console output for details:</p>
+                            <p style="text-align:center;">
+                                <a class="button" href="${env.BUILD_URL}console">View Console Output</a>
+                            </p>
+                        </div>
+                        <div class="footer">
+                            Jenkins CI • ${new Date().format("EEE, MMM d yyyy HH:mm:ss z")}
+                        </div>
+                    </div>
+                </body>
+                </html>
+                """
+            )
+        }
+
+        always {
+            cleanWs()
+        }
+    }
+}
