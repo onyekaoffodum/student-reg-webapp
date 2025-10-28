@@ -14,7 +14,7 @@ pipeline {
     environment {
         SONARQUBE_TOKEN = credentials('SonarQubeToken')
         TomcatserverSSHUserName = 'ec2-user'
-        TomcatSystemIP = '98.81.170.82'
+        TomcatSystemIP = '3.93.189.91'
         CATALINA_HOME = '/opt/tomcat'
     }
 
