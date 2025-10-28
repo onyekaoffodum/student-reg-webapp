@@ -48,16 +48,16 @@ pipeline {
         }
 
         stage("Deploy to QA Environment") {
+            when { expression { env.BRANCH_NAME == 'development' } }
             steps {
-                when { expression { env.BRANCH_NAME == 'development' } }
                 echo "Deploying to QA Environment..."
                 // Add deployment steps for QA environment here
             }
         }
 
         stage("Deploy WAR to Tomcat") {
+            when { expresssion { env.BRANCH_NAME == 'development' } }
             steps {
-                when { expresssion { env.BRANCH_NAME == 'development' } }
                 sshagent(['TomcatServer_SSH_Credential']) {
                     sh """
                         echo "Stopping Tomcat on remote server..."
@@ -80,9 +80,8 @@ pipeline {
             }
         }
         stage("Deploy to Production Environment") {
+            when { expression { env.BRANCH_NAME == 'main' }}
             steps {
-                when { expression { env.BRANCH_NAME == 'main' }
-                }
                 echo "Deploying to Production Environment.."
             }
         }
