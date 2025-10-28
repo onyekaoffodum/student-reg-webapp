@@ -1,0 +1,142 @@
+properties([
+    buildDiscarder(logRotator(numToKeepStr: '5')),
+    pipelineTriggers([githubPush()])
+])
+
+node {
+    def mavenHome = tool name: 'Maven-3.9.11', type: 'maven'
+    def TomcatSystemIP = "54.85.210.221"
+    def TomcatserverSSHUserName = "ec2-user"
+
+    try {
+        stage("Git Clone") {
+            git branch: 'development', credentialsId: 'GitHub_Credentials', url: 'https://github.com/onyekaoffodum/student-reg-webapp.git'
+        }
+
+        stage("Maven Build") {
+            sh "${mavenHome}/bin/mvn clean package"
+        }
+
+        stage("Sonar Scan") {
+            withCredentials([string(credentialsId: 'SonarQubeToken', variable: 'sonartoken')]) {
+                sh "${mavenHome}/bin/mvn clean verify sonar:sonar -Dsonar.token=${sonartoken}"
+            }
+        }
+
+        stage("Upload to Nexus") {
+            sh "${mavenHome}/bin/mvn clean deploy"
+        }
+
+        stage("Deploy to Tomcat") {
+            sshagent(['TomcatServer_SSH_Credential']) {
+                sh """
+                    scp -o StrictHostKeyChecking=no target/student-reg-webapp.war ${TomcatserverSSHUserName}@${TomcatSystemIP}:/tmp/student-reg-webapp.war
+                    ssh -o StrictHostKeyChecking=no ${TomcatserverSSHUserName}@${TomcatSystemIP} 'sudo mv /tmp/student-reg-webapp.war /opt/tomcat/webapps/student-reg-webapp.war && sudo chown ec2-user:ec2-user /opt/tomcat/webapps/student-reg-webapp.war'
+                """
+            }
+        }
+
+        currentBuild.result = 'SUCCESS'
+
+    } catch (err) {
+        currentBuild.result = 'FAILURE'
+        echo "❌ Build failed: ${err}"
+    } finally {
+        def buildStatus = currentBuild.result ?: 'SUCCESS'
+        def slackcolorcode = (buildStatus == 'SUCCESS') ? 'good' : 'danger'
+        def color
+
+        if (buildStatus == 'SUCCESS') {
+            color = '#4CAF50' // Green
+        } else if (buildStatus == 'FAILURE') {
+            color = '#F44336' // Red
+        } else {
+            color = '#FF9800' // Orange for unstable/others
+        }
+
+        stage("Send Notification") {
+
+            slackSend channel: 'lic-app-team', color: "${slackcolorcode}", message: "Please check console output ${env.BUILD_URL}\', \'${env.JOB_NAME}-${env.BUILD_NUMBER}-${buildStatus}\'", tokenCredentialId: 'SlackToken'
+            
+            echo "📧 Sending styled email notification (${buildStatus})..."
+
+            emailext(
+                subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - ${buildStatus}",
+                to: 'sandieji@rocketmail.com',
+                mimeType: 'text/html',
+                body: """
+                <html>
+                <head>
+                    <style>
+                        body {
+                            font-family: 'Segoe UI', Arial, sans-serif;
+                            background-color: #f4f4f4;
+                            margin: 0;
+                            padding: 20px;
+                        }
+                        .container {
+                            background: #fff;
+                            border-radius: 8px;
+                            padding: 20px;
+                            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+                        }
+                        .header {
+                            background-color: ${color};
+                            color: white;
+                            padding: 15px;
+                            border-radius: 8px 8px 0 0;
+                            text-align: center;
+                            font-size: 20px;
+                            font-weight: bold;
+                        }
+                        .content {
+                            padding: 20px;
+                            font-size: 14px;
+                            color: #333;
+                        }
+                        .footer {
+                            font-size: 12px;
+                            color: #888;
+                            text-align: center;
+                            padding-top: 15px;
+                            border-top: 1px solid #ddd;
+                        }
+                        a.button {
+                            display: inline-block;
+                            padding: 10px 16px;
+                            background-color: ${color};
+                            color: white;
+                            border-radius: 4px;
+                            text-decoration: none;
+                            margin-top: 15px;
+                        }
+                        a.button:hover {
+                            background-color: #333;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            🔔 ${env.JOB_NAME} – Build #${env.BUILD_NUMBER}
+                        </div>
+                        <div class="content">
+                            <p>Hello,</p>
+                            <p>The Jenkins job <b>${env.JOB_NAME}</b> has completed with status:</p>
+                            <h2 style="color:${color}; text-align:center;">${buildStatus}</h2>
+                            <p>You can view full build details and console output below:</p>
+                            <p style="text-align:center;">
+                                <a class="button" href="${env.BUILD_URL}console">View Console Output</a>
+                            </p>
+                        </div>
+                        <div class="footer">
+                            Jenkins CI • ${new Date().format("EEE, MMM d yyyy HH:mm:ss z")}
+                        </div>
+                    </div>
+                </body>
+                </html>
+                """
+            )
+        }
+    }
+}

@@ -47,17 +47,8 @@ pipeline {
             }
         }
 
-        stage("Deploy to QA Environment") {
-                when { expression { env.BRANCH_NAME == 'development' } }
-                steps {
-                echo "Deploying to QA Environment..."
-                // Add deployment steps for QA environment here
-            }
-        }
-
         stage("Deploy WAR to Tomcat") {
-                when { expression { env.BRANCH_NAME == 'development' } }
-                steps {
+            steps {
                 sshagent(['TomcatServer_SSH_Credential']) {
                     sh """
                         echo "Stopping Tomcat on remote server..."
@@ -77,12 +68,6 @@ pipeline {
                         ssh -o StrictHostKeyChecking=no ${TomcatserverSSHUserName}@${TomcatSystemIP} 'sudo ${CATALINA_HOME}/bin/startup.sh'
                     """
                 }
-            }
-        }
-        stage("Deploy to Production Environment") {
-                when { expression { env.BRANCH_NAME == 'main' } }
-                steps {
-                echo "Deploying to Production Environment.."
             }
         }
     }
