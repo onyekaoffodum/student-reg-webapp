@@ -56,7 +56,7 @@ pipeline {
         }
 
         stage("Deploy WAR to Tomcat") {
-            when { expresssion { env.BRANCH_NAME == 'development' } }
+            when { expression { env.BRANCH_NAME == 'development' } }
             steps {
                 sshagent(['TomcatServer_SSH_Credential']) {
                     sh """
