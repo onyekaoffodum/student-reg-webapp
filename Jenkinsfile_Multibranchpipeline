@@ -58,6 +58,7 @@ pipeline {
         stage("Deploy WAR to Tomcat") {
                 when { expression { env.BRANCH_NAME == 'development' } }
                 steps {
+                    echo "Deploying WAR to Tomcat Server..."
                 sshagent(['TomcatServer_SSH_Credential']) {
                     sh """
                         echo "Stopping Tomcat on remote server..."
